@@ -3,10 +3,13 @@
   "server": "wire-build-mcp",
   "entry_path": "/wire-build-mcp",
   "product_line": "wire",
-  "hosting": ["shared-instance"],
-  "description": "柏讯（wire 线）产物构建 MCP：按 spec 创建/更新/发布 form（录入表单）与 record-view（单记录扫码页）、产物与版本读取、数据集列事实读取、按需建集（CSV 导入）。写入默认落草稿、发布必须独立显式调用；spec 引用了不存在的列时错误文案带该数据集真实列名清单。进站 Bearer 原样转发——双轨鉴权（Logto ID token / wdk_ key）全由 wire 判定。",
+  "hosting": [
+    "shared-instance"
+  ],
+  "description": "柏讯（wire 线）产物构建与数据治理 MCP：按 spec 创建/更新/发布 form（录入表单）与 record-view（单记录扫码页）、产物与版本读取、数据集列事实读取、按需建集（CSV 导入）；并管理表单收上来的数据（读有效视图、改错、撤销、查历史、导出 CSV）。写入落草稿、发布必须独立显式调用；写修正必须带 source 来源标记（不代填）；spec 引用了不存在的列时错误文案带该数据集真实列名清单；导出结果带 truncated 字段如实标注截断。进站 Bearer 原样转发——双轨鉴权（Logto ID token / wdk_ key）全由 wire 判定。",
   "skills_eligible_for_packs": [
-    "wire-artifact-build"
+    "wire-artifact-build",
+    "wire-data-steward"
   ],
   "tool_groups": [
     {
@@ -28,6 +31,21 @@
         "fd-wire-api 客户面 /api/v1/artifacts*|datasets*（柏讯控制台同源）"
       ],
       "notes": "写入默认落草稿（draft），发布=publish 独立显式调用（上游 publish 端点只做状态迁移、不校 spec 结构——故工具面不提供『创建即发布』开关，未声明参数由 MCP 层拒绝）；创建=空白建档+spec 写入两步（上游客户面无一步落完整 spec v1 路径），spec 被拒时空白产物补偿归档（零半写）；422 错误文案带目标数据集真实列名清单（列漂移失败前移到生成侧）；建集按档位分流（free→CSV 导入，其余→列声明空集），绝不编造示例行。"
+    },
+    {
+      "group": "steward",
+      "level": "commercial",
+      "tools": [
+        "wire_dataset_rows_read",
+        "wire_dataset_correct",
+        "wire_dataset_corrections_list",
+        "wire_dataset_correction_revert",
+        "wire_dataset_export"
+      ],
+      "data_sources": [
+        "fd-wire-api 客户面 /api/v1/datasets/{id}/rows|corrections|export"
+      ],
+      "notes": "数据治理面：行读取返有效视图（含修正）；写修正三分支（insert/update/delete）必须带 source 来源标记（不代填——混有表单提交与对话改错两类数据时是事后区分的唯一依据）；撤销只置 reverted_at（基行永不改写，二次撤销由上游判 409 原文透传）；导出带 truncated 字段（true=被上游行数闸截断，不是全量）。不提供删数据集（不可逆且连带产物）。"
     }
   ]
 }
