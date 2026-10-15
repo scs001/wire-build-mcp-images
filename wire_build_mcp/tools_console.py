@@ -106,6 +106,55 @@ async def _annotate_spec_error(
     return WireError(exc.kind, exc.status, hint)
 
 
+def _form_columns_from_spec(spec: object) -> list[str]:
+    """form spec 信封内引用的全部字段列（``spec.spec.fields[].column``）。"""
+    if not isinstance(spec, dict):
+        return []
+    inner = spec.get("spec")
+    if not isinstance(inner, dict):
+        return []
+    fields = inner.get("fields")
+    if not isinstance(fields, list):
+        return []
+    return [
+        f.get("column") for f in fields
+        if isinstance(f, dict) and isinstance(f.get("column"), str) and f.get("column")
+    ]
+
+
+async def _reject_unknown_form_columns(
+    client: WireClient, *, bearer: str, spec: object
+) -> None:
+    """form 列名保存时刻预检（design D3 的 form 侧兑现）。
+
+    上游 form 结构层按设计不裁决引用列（漂移到提交阶段才 422）——那个假设
+    对 agent 不成立（无界面下拉可看）。故本层在保存前读一次数据集列事实，
+    引用了不存在的列即拒（422 带真实列名清单），绝不落一份「保存成功、提交
+    必炸」的 spec。列事实读取失败时不拦（辅助事实不可得，放行交给上游语义）。
+    """
+    dataset_id = _spec_dataset_id(spec)
+    columns = _form_columns_from_spec(spec)
+    if not dataset_id or not columns:
+        return
+    try:
+        record = await client.request(
+            "GET", f"/api/v1/datasets/{dataset_id}", bearer=bearer
+        )
+    except WireError:
+        return
+    real = _columns_from_dataset(record)
+    if not real:
+        return
+    missing = [c for c in dict.fromkeys(columns) if c not in real]
+    if missing:
+        raise WireError(
+            "invalid", 422,
+            f"form spec 引用了数据集中不存在的列：{json.dumps(missing, ensure_ascii=False)}"
+            "。该数据集当前真实列名（请据此修正 spec 引用）："
+            + json.dumps(real, ensure_ascii=False),
+        )
+
+
 def register(mcp: FastMCP, client: WireClient) -> None:
     # ── 事实读（3）────────────────────────────────────────────────────────────
 
@@ -247,6 +296,8 @@ def register(mcp: FastMCP, client: WireClient) -> None:
         零半写。
         """
         bearer = _bearer_or_raise()
+        if kind == "form":
+            await _reject_unknown_form_columns(client, bearer=bearer, spec=spec)
         artifact = await client.request(
             "POST", "/api/v1/artifacts", bearer=bearer,
             json_body={"kind": kind, "title": title},
@@ -320,6 +371,7 @@ def register(mcp: FastMCP, client: WireClient) -> None:
         422 时若 spec 引用数据集，错误文案带该数据集真实列名清单。
         """
         bearer = _bearer_or_raise()
+        await _reject_unknown_form_columns(client, bearer=bearer, spec=spec)
         try:
             return await client.request(
                 "PUT", f"/api/v1/artifacts/{artifact_id}", bearer=bearer,

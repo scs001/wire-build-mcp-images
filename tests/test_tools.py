@@ -186,6 +186,7 @@ async def test_dataset_create_quota_403_relayed_verbatim(bearer):
 
 async def test_form_create_lands_draft_via_blank_then_put(bearer):
     fake = FakeClient(by_path={
+        "GET /api/v1/datasets/ds1": {"columns": [{"name": "地块编号"}, {"name": "记录日期"}]},
         "POST /api/v1/artifacts": {"id": 11, "kind": "form", "status": "draft", "version": 1},
         "PUT /api/v1/artifacts/11": {"id": 11, "status": "draft", "version": 2},
     })
@@ -196,8 +197,29 @@ async def test_form_create_lands_draft_via_blank_then_put(bearer):
     data = out.data if hasattr(out, "data") else out
     assert data["artifact_id"] == 11 and data["status"] == "draft"
     assert "wire_artifact_publish" in data["note"]
-    assert fake.calls[0]["json_body"] == {"kind": "form", "title": "采收录入"}
-    assert fake.calls[1]["json_body"]["spec"]["spec"]["datasetId"] == "ds1"
+    assert fake.calls[1]["json_body"] == {"kind": "form", "title": "采收录入"}
+    assert fake.calls[2]["json_body"]["spec"]["spec"]["datasetId"] == "ds1"
+
+
+async def test_form_create_rejects_unknown_column_before_write(bearer):
+    """form 列名保存时刻预检（design D3 form 侧）：坏列 422 带真列名、零写入。"""
+    fake = FakeClient(by_path={
+        "GET /api/v1/datasets/ds1": {"columns": [{"name": "地块编号"}, {"name": "记录日期"}]},
+        "POST /api/v1/artifacts": {"id": 99},
+        "PUT /api/v1/artifacts/99": {"id": 99},
+    })
+    mcp = await _mk(fake)
+    bad_spec = {"title": "坏列", "spec": {"datasetId": "ds1",
+                "fields": [{"column": "不存在的列", "label": "x", "input": "text"}]}}
+    async with Client(mcp) as c:
+        with pytest.raises(Exception) as ei:
+            await c.call_tool("wire_artifact_form_create", {
+                "title": "坏列", "spec": bad_spec})
+    msg = str(ei.value)
+    assert "不存在的列" in msg and "地块编号" in msg and "记录日期" in msg
+    # 预检拒绝 = 只发生一次列事实读取，绝不走到建档（零半写）
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["method"] == "GET"
 
 
 async def test_record_view_create_lands_draft(bearer):
@@ -248,6 +270,7 @@ async def test_update_422_annotated_with_real_columns(bearer):
 
 async def test_update_409_passthrough_no_annotation(bearer):
     fake = FakeClient(by_path={
+        "GET /api/v1/datasets/ds1": {"columns": [{"name": "地块编号"}]},
         "PUT /api/v1/artifacts/7": WireError(
             "conflict", 409, "产物 7 已归档（archived），不可编辑——请先恢复（restore）为草稿再修改。"),
     })
@@ -256,8 +279,9 @@ async def test_update_409_passthrough_no_annotation(bearer):
         with pytest.raises(Exception) as ei:
             await c.call_tool("wire_artifact_update", {"artifact_id": 7, "spec": _form_spec()})
     assert "请先恢复" in str(ei.value)
-    # 409 不做列名核对（只多了一次 PUT 调用）
-    assert len(fake.calls) == 1
+    # 409 不做列名追加核对（预检一次读取 + 一次 PUT；422 文案增强才是失败路径专属）
+    assert len(fake.calls) == 2
+    assert [c["method"] for c in fake.calls] == ["GET", "PUT"]
 
 
 async def test_publish_is_separate_explicit_call(bearer):
