@@ -10,9 +10,11 @@
 
 ## 两条纪律（design D2/D3）
 
-1. **来源标记强制且不代填**（spec「Corrections are attributable to their actor」）。
-   修正写入必须带来源标记；缺失即拒绝，不猜默认值。理由：同一数据集会混入
-   「表单提交」与「对话改错」两种来源的数据，标记是事后区分的唯一依据。
+1. **归因如实**（spec「Corrections are attributable to their actor」）。审计身份由
+   服务端按凭据轨道推导（actor=`customer:{cid}`），调用方不可指定；`source` 是
+   本层声明性入参——上游修正载荷**不承载**该字段（传入即被忽略），工具 docstring
+   如实说明，事后区分「表单提交」与「对话改错」的权威依据=修正历史里的
+   actor（share-form:{artifact_id} vs customer:{cid}）。绝不谎称来源标记已落库。
 2. **导出截断如实**（spec「Export never overstates completeness」）。上游用响应头
    ``X-Export-Truncated: true`` 标注「已截断、可能还有更多行」；HTTP 头对 agent
    不可见，故本层把它 **lift 成返回结构里的显式字段**，避免模型误以为手里
@@ -112,12 +114,12 @@ def register(mcp: FastMCP, client: WireClient) -> None:
     async def wire_dataset_correct(
         dataset_id: str,
         op: str,
-        source: str,
         row_id: str | None = None,
         column: str | None = None,
         value: Any = None,
         values: dict[str, Any] | None = None,
         artifact_id: int | None = None,
+        source: str | None = None,
     ) -> Any:
         """写入一条修正（POST /datasets/{id}/corrections）——不可变覆盖层。
 
@@ -128,16 +130,20 @@ def register(mcp: FastMCP, client: WireClient) -> None:
           携带时服务端按该 form 产物**当前版本**执行全量字段校验+提交闸
           （与公开提交同一执法点），命中 422 带 constraint id+message 且零写入
 
-        ``source``（**必填**）=来源标记，用于事后区分「这笔是谁写的」——公开表单
-        提交的条目的 actor 形如 ``share-form:{artifact_id}``，对话侧写入应带自己的
-        可辨识标记（例如 ``conversation:{id}``）。**服务绝不代填**。
+        归因（审计身份）由**服务端按凭据轨道推导**：actor=`customer:{客户}`、
+        channel 记录轨道；公开表单提交的条目 actor 为 ``share-form:{artifact_id}``。
+        ``source`` 是本层的声明性入参（调用方自述来源，如 ``conversation:{id}``）——
+        **上游修正载荷不承载该字段**（传入即被上游忽略），事后区分来源的权威依据
+        是修正历史里的 actor+channel，本工具如实转述不谎称落库。
 
         语义边界：基行永不改写（更正以 append 生效）；许可悬空（行锚不存在）
         落层；行数超过档位配额时上游 429/402 如实转述——服务不代删数据。
         """
         if op not in ("insert", "update", "delete"):
             raise WireError("invalid", 422, "op 必须是 insert、update 或 delete 之一")
-        payload: dict[str, Any] = {"op": op, "source": _require_source(source)}
+        payload: dict[str, Any] = {"op": op}
+        if (source or "").strip():
+            payload["source"] = source.strip()  # 声明性自述；上游当前不承载，丢弃不影响行为
         if row_id is not None:
             payload["row_id"] = row_id
         if column is not None:

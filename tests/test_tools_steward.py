@@ -71,31 +71,34 @@ async def test_rows_read_rejects_bad_pagination(bearer):
     assert fake.calls == []  # 越界参数零请求
 
 
-# ── 来源标记强制 ─────────────────────────────────────────────────────────────
+# ── 归因（source 声明性入参，上游不承载）─────────────────────────────────────
 
-async def test_correct_requires_source(bearer):
-    fake = FakeClient()
+async def test_correct_source_optional_and_never_fabricated(bearer):
+    """source 是声明性自述；缺失不拒（上游无承载字段），提供则原样透传不编造。"""
+    fake = FakeClient(results=[{"correction_id": 7}] * 2)
     mcp = await _mk(fake)
     async with Client(mcp) as c:
-        with pytest.raises(Exception) as ei:
-            await c.call_tool("wire_dataset_correct", {
-                "dataset_id": "ds1", "op": "update",
-                "row_id": "1", "column": "地块编号", "value": "A9",
-                # 缺 source
-            })
-    assert "source" in str(ei.value)
-    assert fake.calls == []  # 不触上游
+        await c.call_tool("wire_dataset_correct", {
+            "dataset_id": "ds1", "op": "update",
+            "row_id": "1", "column": "地块编号", "value": "A9"})
+        await c.call_tool("wire_dataset_correct", {
+            "dataset_id": "ds1", "op": "update", "source": "conversation:9",
+            "row_id": "2", "column": "地块编号", "value": "A8"})
+    first = fake.calls[0]["json_body"]
+    second = fake.calls[1]["json_body"]
+    assert "source" not in first  # 缺 source 不代填（不编造）
+    assert second["source"] == "conversation:9"  # 提供则透传
 
 
-async def test_correct_rejects_blank_source(bearer):
-    fake = FakeClient()
+async def test_correct_blank_source_treated_as_absent(bearer):
+    """空白 source 按无 source 处理（不把空白塞进载荷、不报错）。"""
+    fake = FakeClient(results=[{"correction_id": 7}])
     mcp = await _mk(fake)
     async with Client(mcp) as c:
-        with pytest.raises(Exception) as ei:
-            await c.call_tool("wire_dataset_correct", {
-                "dataset_id": "ds1", "op": "delete", "row_id": "1", "source": "   "})
-    assert "source" in str(ei.value)
-    assert fake.calls == []
+        await c.call_tool("wire_dataset_correct", {
+            "dataset_id": "ds1", "op": "delete", "row_id": "1", "source": "   "})
+    assert len(fake.calls) == 1
+    assert "source" not in fake.calls[0]["json_body"]
 
 
 async def test_correct_rejects_unknown_op(bearer):
