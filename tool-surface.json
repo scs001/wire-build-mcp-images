@@ -1,0 +1,33 @@
+{
+  "schema": "mcp-tool-surface/v1",
+  "server": "wire-build-mcp",
+  "entry_path": "/wire-build-mcp",
+  "product_line": "wire",
+  "hosting": ["shared-instance"],
+  "description": "柏讯（wire 线）产物构建 MCP：按 spec 创建/更新/发布 form（录入表单）与 record-view（单记录扫码页）、产物与版本读取、数据集列事实读取、按需建集（CSV 导入）。写入默认落草稿、发布必须独立显式调用；spec 引用了不存在的列时错误文案带该数据集真实列名清单。进站 Bearer 原样转发——双轨鉴权（Logto ID token / wdk_ key）全由 wire 判定。",
+  "skills_eligible_for_packs": [
+    "wire-artifact-build"
+  ],
+  "tool_groups": [
+    {
+      "group": "build",
+      "level": "commercial",
+      "tools": [
+        "wire_dataset_schema",
+        "wire_artifact_list",
+        "wire_artifact_get",
+        "wire_dataset_create",
+        "wire_artifact_form_create",
+        "wire_artifact_record_view_create",
+        "wire_artifact_update",
+        "wire_artifact_publish",
+        "wire_artifact_archive",
+        "wire_artifact_restore"
+      ],
+      "data_sources": [
+        "fd-wire-api 客户面 /api/v1/artifacts*|datasets*（柏讯控制台同源）"
+      ],
+      "notes": "写入默认落草稿（draft），发布=publish 独立显式调用（上游 publish 端点只做状态迁移、不校 spec 结构——故工具面不提供『创建即发布』开关，未声明参数由 MCP 层拒绝）；创建=空白建档+spec 写入两步（上游客户面无一步落完整 spec v1 路径），spec 被拒时空白产物补偿归档（零半写）；422 错误文案带目标数据集真实列名清单（列漂移失败前移到生成侧）；建集按档位分流（free→CSV 导入，其余→列声明空集），绝不编造示例行。"
+    }
+  ]
+}
